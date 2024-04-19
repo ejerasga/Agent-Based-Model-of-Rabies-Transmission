@@ -1,0 +1,154 @@
+model model5
+
+global {
+    int nb_people <- 5000;
+    int nb_dogs <- 10;
+    int nb_infected_init <- 5;
+    float step <- 5 #mn;
+    file roads_shapefile <- file("../includes/tutorial/roads.shp");
+    file buildings_shapefile <- file("../includes/tutorial/building.shp");
+    geometry shape <- envelope(roads_shapefile);
+    graph road_network;
+    
+    int nb_people_infected <- nb_infected_init update: people count (each.is_infected);
+    int nb_people_not_infected <- nb_people - nb_infected_init update: nb_people - nb_people_infected;
+    float infected_rate update: nb_people_infected / nb_people;
+    
+    int nb_people_with_rabies <- 0;
+    
+    int nb_people_vaccinated <- 0;  // Number of people to be vaccinated
+    int nb_dogs_vaccinated <- 0;    // Number of dogs to be vaccinated
+    
+    init {
+        create road from: roads_shapefile;
+        road_network <- as_edge_graph(road);        
+        create building from: buildings_shapefile;
+        create people number:nb_people {
+            location <- any_location_in(one_of(building));                
+        }
+        create dogs number:nb_dogs {
+            location <- any_location_in(one_of(building));
+            is_infected <- false;
+        }
+        ask nb_infected_init among people {
+            is_infected <- true;
+        }
+        ask nb_people_vaccinated among people {
+            is_vaccinated <- true;
+        }
+        ask nb_dogs_vaccinated among dogs {
+            is_vaccinated <- true;
+        }
+    }
+
+    reflex end_simulation when: infected_rate = 1.0 {
+        do pause;
+    }   
+    
+    reflex count_rabies when: true {
+        nb_people_with_rabies <- people count (each.is_infected);
+    }
+}
+
+
+species people skills:[moving]{
+    float speed <- (2 + rnd(3)) #km/#h;
+    bool is_infected <- false;
+    bool is_vaccinated <- false;
+    point target;
+    
+    reflex stay when: target = nil {
+        if flip(0.05) {
+            target <- any_location_in (one_of(building));
+        }
+    }
+        
+    reflex move when: target != nil{
+        do goto target: target on: road_network;
+        if (location = target) {
+            target <- nil;
+        } 
+    }
+
+    reflex infect when: not is_vaccinated and not is_infected {
+        ask dogs at_distance 10 #m {
+            if is_infected and flip(0.05) {
+                is_infected <- true;
+            }
+        }
+    }
+    
+    aspect circle {
+        draw circle(10) color: is_infected ? #red : (is_vaccinated ? #blue : #green);
+    }
+}
+
+species dogs skills:[moving]{
+    float speed <- (3 + rnd(5)) #km/#h;
+    bool is_infected <- false;
+    bool is_vaccinated <- false;
+    point target;
+    
+    reflex stay when: target = nil {
+        if flip(0.1) {
+            target <- any_location_in (one_of(building));
+        }
+    }
+        
+    reflex move when: target != nil{
+        do goto target: target on: road_network;
+        if (location = target) {
+            target <- nil;
+        } 
+    }
+
+    reflex bite when: true {
+        ask people at_distance 5 #m {
+            if not is_infected and flip(0.1) {
+                is_infected <- true;
+            }
+        }
+    }
+    
+    aspect circle {
+        draw circle(10) color: (is_vaccinated ? #cyan : #brown);
+    }
+}
+
+species road {
+    aspect geom {
+        draw shape color: #black;
+    }
+}
+
+species building {
+    aspect geom {
+        draw shape color: #gray;
+    }
+}
+
+experiment dog_bite_rabies_cases type: gui {
+    parameter "Nb people infected at init" var: nb_infected_init min: 1 max: 2147;
+    parameter "Nb dogs" var: nb_dogs min: 1 max: 1000;
+    parameter "Nb people vaccinated" var: nb_people_vaccinated min: 0 max: nb_people;
+    parameter "Nb dogs vaccinated" var: nb_dogs_vaccinated min: 0 max: nb_dogs;
+
+    output {
+        monitor "Infected people rate" value: infected_rate;
+        monitor "Number of people with rabies" value: nb_people_with_rabies;
+
+        display map {
+            species road aspect:geom;
+            species building aspect:geom;
+            species people aspect:circle;
+            species dogs aspect:circle;
+        }
+
+        display chart_display refresh: every(10 #cycles) {
+            chart "Dob bite rabies cases" type: series {
+                data "People" value: nb_people_not_infected color: #green;
+                data "People with rabies" value: nb_people_infected color: #red;
+            }
+        }
+    }
+}
